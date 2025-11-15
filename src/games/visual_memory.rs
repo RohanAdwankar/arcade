@@ -7,7 +7,7 @@ use ratatui::prelude::*;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::{GameAction, GameKind, StatRecord};
+use super::{GameAction, GameKind, StatRecord, navigation::VimMotionState};
 
 const GRID: usize = 5;
 const BASE_CELLS: usize = 3;
@@ -24,6 +24,7 @@ pub struct VisualMemoryState {
     lives: u8,
     phase: Phase,
     status: String,
+    nav: VimMotionState,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +49,7 @@ impl VisualMemoryState {
                 since: Instant::now(),
             },
             status: "Memorize the pattern".into(),
+            nav: VimMotionState::default(),
         };
         state.generate_pattern();
         state
@@ -56,6 +58,8 @@ impl VisualMemoryState {
     fn generate_pattern(&mut self) {
         self.pattern.clear();
         self.guesses.clear();
+        self.cursor = (0, 0);
+        self.nav.clear();
         let mut cells = Vec::new();
         for x in 0..GRID {
             for y in 0..GRID {
@@ -71,15 +75,9 @@ impl VisualMemoryState {
         self.status = format!("Round {} · memorize", self.round);
     }
 
-    fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let (mut x, mut y) = self.cursor;
-        x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
-        y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
-        self.cursor = (x, y);
-    }
-
     fn toggle(&mut self) {
         if matches!(self.phase, Phase::Recall) {
+            self.nav.clear();
             if !self.guesses.insert(self.cursor) {
                 self.guesses.remove(&self.cursor);
             }
@@ -96,10 +94,7 @@ impl VisualMemoryState {
             self.phase = Phase::Result;
             if self.round - 1 > self.best {
                 self.best = self.round - 1;
-                let record = StatRecord {
-                    label: "Round".into(),
-                    value: self.best.to_string(),
-                };
+                let record = StatRecord::new("Round", self.best.to_string(), self.best as f64);
                 self.generate_pattern();
                 return GameAction::Record(record, GameKind::VisualMemory);
             }
@@ -155,13 +150,14 @@ impl VisualMemoryState {
 
     pub fn handle_event(&mut self, event: &Event) -> GameAction {
         if let Event::Key(key) = event {
+            if self.nav.handle_key(key, &mut self.cursor, GRID, GRID) {
+                return GameAction::None;
+            }
+
             match key.code {
-                KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
-                KeyCode::Right | KeyCode::Char('l') => self.move_cursor(1, 0),
-                KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
-                KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
-                KeyCode::Char(' ') => self.toggle(),
-                KeyCode::Enter => return self.submit(),
+                KeyCode::Char(' ') | KeyCode::Enter => self.toggle(),
+                KeyCode::Char('s') | KeyCode::Char('S') => return self.submit(),
+                KeyCode::Esc => self.nav.clear(),
                 _ => {}
             }
         }
@@ -172,13 +168,18 @@ impl VisualMemoryState {
         if let Phase::Reveal { since } = self.phase {
             if now.duration_since(since) >= REVEAL {
                 self.phase = Phase::Recall;
-                self.status = "Mark the cells with space".into();
+                self.status = "Toggle with space/enter · submit with s".into();
             }
         }
         GameAction::None
     }
 
     pub fn status_line(&self) -> String {
-        format!("Round {} · Lives {}", self.round, self.lives)
+        let base = format!("Round {} · Lives {}", self.round, self.lives);
+        if let Some(count) = self.nav.prefix() {
+            format!("{} · count {}", base, count)
+        } else {
+            base
+        }
     }
 }

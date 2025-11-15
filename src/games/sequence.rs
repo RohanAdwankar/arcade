@@ -83,10 +83,8 @@ impl SequenceState {
                     let completed = self.sequence.len();
                     if completed > self.best {
                         self.best = completed;
-                        let record = StatRecord {
-                            label: "Pattern".into(),
-                            value: completed.to_string(),
-                        };
+                        let record =
+                            StatRecord::new("Pattern", completed.to_string(), completed as f64);
                         self.begin_new_round(true);
                         return GameAction::Record(record, GameKind::Sequence);
                     }

@@ -61,10 +61,11 @@ impl NumberMemoryState {
             if self.round - 1 > self.best_round {
                 self.best_round = self.round - 1;
                 return GameAction::Record(
-                    StatRecord {
-                        label: "Digits".into(),
-                        value: format!("{}", self.best_round),
-                    },
+                    StatRecord::new(
+                        "Digits",
+                        self.best_round.to_string(),
+                        self.best_round as f64,
+                    ),
                     GameKind::NumberMemory,
                 );
             }

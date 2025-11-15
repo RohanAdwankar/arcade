@@ -70,10 +70,7 @@ impl ReactionState {
                 if self.best_ms.map(|best| ms < best).unwrap_or(true) {
                     self.best_ms = Some(ms);
                     return Some(GameAction::Record(
-                        StatRecord {
-                            label: "Best".into(),
-                            value: format!("{ms} ms"),
-                        },
+                        StatRecord::new("Best", format!("{ms} ms"), ms as f64),
                         GameKind::Reaction,
                     ));
                 }

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::Event;
 use ratatui::Frame;
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod aim;
 pub mod chimp_test;
+pub mod navigation;
 pub mod number_memory;
 pub mod reaction;
 pub mod sequence;
@@ -63,12 +64,47 @@ impl GameKind {
             GameKind::Typing => "Type the prompt as quickly as you can.",
         }
     }
+
+    pub fn score_direction(self) -> ScoreDirection {
+        match self {
+            GameKind::Reaction | GameKind::AimTrainer => ScoreDirection::LowerIsBetter,
+            GameKind::Sequence
+            | GameKind::NumberMemory
+            | GameKind::VerbalMemory
+            | GameKind::ChimpTest
+            | GameKind::VisualMemory
+            | GameKind::Typing => ScoreDirection::HigherIsBetter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreDirection {
+    HigherIsBetter,
+    LowerIsBetter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatRecord {
     pub label: String,
     pub value: String,
+    pub score: f64,
+    pub recorded_at: u64,
+}
+
+impl StatRecord {
+    pub fn new(label: impl Into<String>, value: impl Into<String>, score: f64) -> Self {
+        let recorded_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|dur| dur.as_secs())
+            .unwrap_or(0);
+        Self {
+            label: label.into(),
+            value: value.into(),
+            score,
+            recorded_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,7 +1,12 @@
 [package]
-name = "bored"
+name = "arcade"
 version = "0.1.0"
 edition = "2024"
+authors = ["Rohan Adwankar <rohan.adwankar@gmail.com>"]
+description = "Games with vim motion controls in the terminal"
+repository = "https://github.com/RohanAdwankar/arcade"
+license = "MIT"
+keywords = ["game", "vim", "memory", "nvim", "typing"]
 
 [dependencies]
 crossterm = "0.27"

@@ -57,10 +57,7 @@ impl VerbalMemoryState {
             self.seen.insert(self.current);
             if self.score > self.best {
                 self.best = self.score;
-                let record = StatRecord {
-                    label: "Score".into(),
-                    value: self.best.to_string(),
-                };
+                let record = StatRecord::new("Score", self.best.to_string(), self.best as f64);
                 self.next_word();
                 return GameAction::Record(record, GameKind::VerbalMemory);
             }

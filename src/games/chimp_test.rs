@@ -6,9 +6,9 @@ use ratatui::prelude::*;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::{GameAction, GameKind, StatRecord};
+use super::{GameAction, GameKind, StatRecord, navigation::VimMotionState};
 
-const GRID: usize = 4;
+const GRID: usize = 10;
 const BASE_NUMBERS: u8 = 4;
 const REVEAL: Duration = Duration::from_secs(2);
 
@@ -23,6 +23,7 @@ pub struct ChimpTestState {
     phase: Phase,
     status: String,
     numbers_hidden: bool,
+    nav: VimMotionState,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,7 @@ impl ChimpTestState {
             },
             status: "Memorize the numbers".into(),
             numbers_hidden: false,
+            nav: VimMotionState::default(),
         };
         state.generate_tiles();
         state
@@ -63,7 +65,8 @@ impl ChimpTestState {
         self.tiles.clear();
         self.next_value = 1;
         self.numbers_hidden = false;
-        let count = BASE_NUMBERS + self.level;
+        let max_tiles = (GRID * GRID) as u8;
+        let count = (BASE_NUMBERS + self.level).min(max_tiles);
         let mut positions = Vec::new();
         for x in 0..GRID {
             for y in 0..GRID {
@@ -83,19 +86,14 @@ impl ChimpTestState {
             start: Instant::now(),
         };
         self.status = format!("Level {} · remember the order", self.level);
-    }
-
-    fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let (mut x, mut y) = self.cursor;
-        x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
-        y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
-        self.cursor = (x, y);
+        self.nav.clear();
     }
 
     fn select(&mut self) -> GameAction {
         if !matches!(self.phase, Phase::Input) {
             return GameAction::None;
         }
+        self.nav.clear();
         if let Some(idx) = self.tiles.iter().position(|t| t.pos == self.cursor) {
             let value = self.tiles[idx].value;
             if value == self.next_value {
@@ -108,10 +106,8 @@ impl ChimpTestState {
                     self.level += 1;
                     if self.level > self.best {
                         self.best = self.level;
-                        let record = StatRecord {
-                            label: "Level".into(),
-                            value: self.best.to_string(),
-                        };
+                        let record =
+                            StatRecord::new("Level", self.best.to_string(), self.best as f64);
                         self.generate_tiles();
                         return GameAction::Record(record, GameKind::ChimpTest);
                     }
@@ -143,26 +139,28 @@ impl ChimpTestState {
         for y in 0..GRID {
             let mut spans = Vec::with_capacity(GRID * 2);
             for x in 0..GRID {
-                let ch = if let Some(tile) = self.tiles.iter().find(|t| t.pos == (x, y)) {
+                let cell_text = if let Some(tile) = self.tiles.iter().find(|t| t.pos == (x, y)) {
                     let numbers_visible = matches!(self.phase, Phase::Reveal { .. })
                         || (!self.numbers_hidden && !tile.cleared);
                     if numbers_visible {
-                        char::from_digit(tile.value as u32, 10).unwrap_or('*')
+                        format!("{:>3}", tile.value)
+                    } else if tile.cleared {
+                        " ✓ ".into()
                     } else {
-                        '·'
+                        " ■ ".into()
                     }
                 } else {
-                    '·'
+                    "   ".into()
                 };
                 let style = if (x, y) == self.cursor {
                     Style::default()
-                        .fg(Color::Yellow)
+                        .bg(Color::Yellow)
+                        .fg(Color::Black)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
-                spans.push(Span::styled(ch.to_string(), style));
-                spans.push(Span::raw(" "));
+                spans.push(Span::styled(cell_text, style));
             }
             lines.push(Line::from(spans));
         }
@@ -171,11 +169,11 @@ impl ChimpTestState {
 
     pub fn handle_event(&mut self, event: &Event) -> GameAction {
         if let Event::Key(key) = event {
+            if self.nav.handle_key(key, &mut self.cursor, GRID, GRID) {
+                return GameAction::None;
+            }
+
             match key.code {
-                KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
-                KeyCode::Right | KeyCode::Char('l') => self.move_cursor(1, 0),
-                KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
-                KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
                 KeyCode::Enter => {
                     if matches!(self.phase, Phase::Result) {
                         self.level = 1;
@@ -185,6 +183,7 @@ impl ChimpTestState {
                     }
                 }
                 KeyCode::Char(' ') => return self.select(),
+                KeyCode::Esc => self.nav.clear(),
                 _ => {}
             }
         }
@@ -202,6 +201,11 @@ impl ChimpTestState {
     }
 
     pub fn status_line(&self) -> String {
-        format!("Level {} · Next {}", self.level, self.next_value)
+        let base = format!("Level {} · Next {}", self.level, self.next_value);
+        if let Some(count) = self.nav.prefix() {
+            format!("{} · count {}", base, count)
+        } else {
+            base
+        }
     }
 }

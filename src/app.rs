@@ -9,17 +9,19 @@ use dirs::config_dir;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
+use serde::Deserialize;
 
 use crate::games::{GameAction, GameKind, GameState, StatRecord};
 use crate::hud::{self, HudContext};
 use crate::menu::MenuState;
 
 const TICK_RATE: Duration = Duration::from_millis(50);
+const HISTORY_LIMIT: usize = 64;
 
 pub struct App {
     menu: MenuState,
     active: Option<GameState>,
-    stats: HashMap<GameKind, StatRecord>,
+    stats: HashMap<GameKind, Vec<StatRecord>>,
     should_quit: bool,
     toast: Option<Toast>,
     command: Option<CommandPalette>,
@@ -28,7 +30,13 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let (stats, stats_path) = load_persisted_stats();
+        let (mut stats, stats_path) = load_persisted_stats();
+        for history in stats.values_mut() {
+            if history.len() > HISTORY_LIMIT {
+                let overflow = history.len() - HISTORY_LIMIT;
+                history.drain(0..overflow);
+            }
+        }
         Self {
             menu: MenuState::default(),
             active: None,
@@ -182,7 +190,12 @@ impl App {
         match action {
             GameAction::None => {}
             GameAction::Record(record, kind) => {
-                self.stats.insert(kind, record);
+                let history = self.stats.entry(kind).or_default();
+                history.push(record);
+                if history.len() > HISTORY_LIMIT {
+                    let overflow = history.len() - HISTORY_LIMIT;
+                    history.drain(0..overflow);
+                }
                 self.persist_stats();
             }
         }
@@ -244,12 +257,30 @@ impl Toast {
     }
 }
 
-fn load_persisted_stats() -> (HashMap<GameKind, StatRecord>, Option<PathBuf>) {
+fn load_persisted_stats() -> (HashMap<GameKind, Vec<StatRecord>>, Option<PathBuf>) {
     let path = stats_file_path();
     if let Some(path_ref) = &path {
         if let Ok(bytes) = fs::read(path_ref) {
-            if let Ok(map) = serde_json::from_slice::<HashMap<GameKind, StatRecord>>(&bytes) {
+            if let Ok(map) = serde_json::from_slice::<HashMap<GameKind, Vec<StatRecord>>>(&bytes) {
                 return (map, path);
+            }
+            if let Ok(legacy) =
+                serde_json::from_slice::<HashMap<GameKind, LegacyStatRecord>>(&bytes)
+            {
+                let converted = legacy
+                    .into_iter()
+                    .map(|(kind, record)| {
+                        let score = parse_legacy_score(kind, &record.value);
+                        let converted = StatRecord {
+                            label: record.label,
+                            value: record.value,
+                            score,
+                            recorded_at: 0,
+                        };
+                        (kind, vec![converted])
+                    })
+                    .collect();
+                return (converted, path);
             }
         }
     }
@@ -276,6 +307,21 @@ impl App {
             }
         }
     }
+}
+
+#[derive(Deserialize)]
+struct LegacyStatRecord {
+    label: String,
+    value: String,
+}
+
+fn parse_legacy_score(_kind: GameKind, value: &str) -> f64 {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .collect::<String>()
+        .parse::<f64>()
+        .unwrap_or(0.0)
 }
 
 #[derive(Default)]

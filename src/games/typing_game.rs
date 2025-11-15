@@ -91,6 +91,7 @@ const WORD_BANK: &[&str] = &[
     "layout",
 ];
 const WORD_COUNT: usize = 80;
+const ROUND_DURATION: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub struct TypingState {
@@ -103,6 +104,7 @@ pub struct TypingState {
     finished: Option<Instant>,
     wpm_best: f64,
     status: String,
+    timer_duration: Duration,
 }
 
 impl TypingState {
@@ -119,7 +121,8 @@ impl TypingState {
             started: None,
             finished: None,
             wpm_best: 0.0,
-            status: "Type the paragraph".into(),
+            status: "30s typing sprint · start typing to begin".into(),
+            timer_duration: ROUND_DURATION,
         }
     }
 
@@ -130,11 +133,25 @@ impl TypingState {
         self.typed_len = 0;
         self.started = None;
         self.finished = None;
-        self.status = "Type the paragraph".into();
+        self.status = "30s typing sprint · start typing to begin".into();
+    }
+
+    fn ensure_prompt_capacity(&mut self) {
+        if self.prompt_len.saturating_sub(self.typed_len) < 10 {
+            let extra = generate_prompt(&mut self.rng);
+            if !self.prompt.ends_with(' ') {
+                self.prompt.push(' ');
+            }
+            self.prompt.push_str(&extra);
+            self.prompt_len = self.prompt.graphemes(true).count();
+        }
     }
 
     fn accuracy(&self) -> f64 {
-        let total = self.prompt_len.max(1);
+        if self.typed.is_empty() {
+            return 100.0;
+        }
+        let total = self.typed_len.max(1);
         let correct = self
             .typed
             .graphemes(true)
@@ -144,30 +161,50 @@ impl TypingState {
         100.0 * correct as f64 / total as f64
     }
 
-    fn complete(&mut self) -> GameAction {
+    fn finish_round(&mut self, elapsed: Duration) -> GameAction {
         if self.finished.is_some() {
             return GameAction::None;
         }
-        self.finished = Some(Instant::now());
-        let elapsed = self
-            .started
-            .map(|start| self.finished.unwrap().saturating_duration_since(start))
-            .unwrap_or(Duration::from_millis(1));
+        let elapsed = elapsed
+            .max(Duration::from_millis(100))
+            .min(self.timer_duration);
         let minutes = elapsed.as_secs_f64() / 60.0;
-        let wpm = (self.prompt_len as f64 / 5.0) / minutes.max(0.01);
+        let wpm = if minutes > 0.0 {
+            (self.typed_len as f64 / 5.0) / minutes
+        } else {
+            0.0
+        };
         let acc = self.accuracy();
-        self.status = format!("Finished! {:.1} WPM · {:.1}% accuracy", wpm, acc);
+        self.status = format!(
+            "Time! {:.1} WPM · {:.1}% accuracy · {} chars",
+            wpm, acc, self.typed_len
+        );
+        let finish_time = self.started.unwrap_or_else(Instant::now) + elapsed;
+        self.finished = Some(finish_time);
         if wpm > self.wpm_best {
             self.wpm_best = wpm;
             return GameAction::Record(
-                StatRecord {
-                    label: "WPM".into(),
-                    value: format!("{wpm:.1}"),
-                },
+                StatRecord::new("WPM", format!("{wpm:.1}"), wpm),
                 GameKind::Typing,
             );
         }
         GameAction::None
+    }
+
+    fn remaining_time(&self) -> Duration {
+        if let Some(start) = self.started {
+            if let Some(finished) = self.finished {
+                let elapsed = finished
+                    .saturating_duration_since(start)
+                    .min(self.timer_duration);
+                self.timer_duration.saturating_sub(elapsed)
+            } else {
+                let elapsed = Instant::now().saturating_duration_since(start);
+                self.timer_duration.saturating_sub(elapsed)
+            }
+        } else {
+            self.timer_duration
+        }
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -204,16 +241,14 @@ impl TypingState {
 
         let mut lines = vec![Line::from(spans)];
         lines.push(Line::from(self.status.as_str()));
-        lines.push(Line::from(format!("Best {:.1} WPM", self.wpm_best)));
-        let accuracy = if self.typed.is_empty() {
-            100.0
-        } else {
-            self.accuracy()
-        };
+        let remaining = self.remaining_time();
         lines.push(Line::from(format!(
-            "Typed {} / {} chars · {:.1}% accuracy",
-            self.typed_len, self.prompt_len, accuracy
+            "Time left {:>5.1}s · Accuracy {:>5.1}% · Typed {} chars",
+            remaining.as_secs_f64().max(0.0),
+            self.accuracy(),
+            self.typed_len
         )));
+        lines.push(Line::from(format!("Best {:.1} WPM", self.wpm_best)));
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
@@ -221,15 +256,14 @@ impl TypingState {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char(ch) if !ch.is_control() => {
-                    if self.finished.is_none() && self.typed_len < self.prompt_len {
+                    if self.finished.is_none() {
                         if self.started.is_none() {
                             self.started = Some(Instant::now());
+                            self.status = "Timer running · keep typing".into();
                         }
                         self.typed.push(ch);
                         self.typed_len += 1;
-                        if self.typed_len == self.prompt_len {
-                            return self.complete();
-                        }
+                        self.ensure_prompt_capacity();
                     }
                 }
                 KeyCode::Backspace => {
@@ -240,7 +274,14 @@ impl TypingState {
                     }
                 }
                 KeyCode::Enter => {
-                    if self.finished.is_some() {
+                    if let Some(start) = self.started {
+                        if let Some(_) = self.finished {
+                            self.restart();
+                        } else {
+                            let elapsed = Instant::now().saturating_duration_since(start);
+                            return self.finish_round(elapsed);
+                        }
+                    } else if self.finished.is_some() {
                         self.restart();
                     }
                 }
@@ -250,7 +291,15 @@ impl TypingState {
         GameAction::None
     }
 
-    pub fn handle_tick(&mut self, _now: Instant) -> GameAction {
+    pub fn handle_tick(&mut self, now: Instant) -> GameAction {
+        if let Some(start) = self.started {
+            if self.finished.is_none() {
+                let elapsed = now.saturating_duration_since(start);
+                if elapsed >= self.timer_duration {
+                    return self.finish_round(self.timer_duration);
+                }
+            }
+        }
         GameAction::None
     }
 
@@ -258,7 +307,12 @@ impl TypingState {
         if self.finished.is_some() {
             self.status.clone()
         } else {
-            format!("Typed {} / {} characters", self.typed_len, self.prompt_len)
+            format!(
+                "Time left {:>4.1}s · Typed {} chars · {:.1}% accuracy",
+                self.remaining_time().as_secs_f64().max(0.0),
+                self.typed_len,
+                self.accuracy()
+            )
         }
     }
 }

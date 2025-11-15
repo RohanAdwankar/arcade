@@ -6,7 +6,7 @@ use ratatui::prelude::*;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::{GameAction, GameKind, StatRecord};
+use super::{GameAction, GameKind, StatRecord, navigation::VimMotionState};
 
 const GRID: usize = 16;
 const TARGETS: u32 = 10;
@@ -23,7 +23,7 @@ pub struct AimTrainerState {
     finished: bool,
     best_total_ms: Option<f64>,
     status: String,
-    pending_count: Option<usize>,
+    nav: VimMotionState,
 }
 
 impl AimTrainerState {
@@ -40,21 +40,8 @@ impl AimTrainerState {
             rng,
             finished: false,
             best_total_ms: None,
-            status: "Move with hjkl · counts like 3j work".into(),
-            pending_count: None,
-        }
-    }
-
-    fn move_steps(&mut self, dx: isize, dy: isize) {
-        let steps = self.pending_count.take().unwrap_or(1).min(GRID);
-        for _ in 0..steps {
-            let (mut x, mut y) = self.cursor;
-            x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
-            y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
-            if (x, y) == self.cursor {
-                break;
-            }
-            self.cursor = (x, y);
+            status: "Move with hjkl · counts + 0/$/gg/G work".into(),
+            nav: VimMotionState::default(),
         }
     }
 
@@ -86,10 +73,7 @@ impl AimTrainerState {
                 {
                     self.best_total_ms = Some(total_ms);
                     return GameAction::Record(
-                        StatRecord {
-                            label: "Total".into(),
-                            value: format!("{total_ms:.0} ms"),
-                        },
+                        StatRecord::new("Total", format!("{total_ms:.0} ms"), total_ms),
                         GameKind::AimTrainer,
                     );
                 }
@@ -120,12 +104,14 @@ impl AimTrainerState {
             "Hits: {}/{} · Elapsed {:.0} ms",
             self.hits, TARGETS, elapsed_ms
         ))];
-        lines.push(Line::from(self.status.as_str()));
+        let status_text = if let Some(count) = self.nav.prefix() {
+            format!("{} · count {}", self.status, count)
+        } else {
+            self.status.clone()
+        };
+        lines.push(Line::from(status_text));
         if let Some(best) = self.best_total_ms {
             lines.push(Line::from(format!("Best run: {:.0} ms", best)));
-        }
-        if let Some(count) = self.pending_count {
-            lines.push(Line::from(format!("Count prefix: {}", count)));
         }
 
         let mut grid_lines = Vec::new();
@@ -153,24 +139,16 @@ impl AimTrainerState {
 
     pub fn handle_event(&mut self, event: &Event) -> GameAction {
         if let Event::Key(key) = event {
+            if self.nav.handle_key(key, &mut self.cursor, GRID, GRID) {
+                return GameAction::None;
+            }
+
             match key.code {
-                KeyCode::Char(ch) if ch.is_ascii_digit() => {
-                    let digit = ch.to_digit(10).unwrap() as usize;
-                    if digit == 0 && self.pending_count.is_none() {
-                        // noop, like vim
-                    } else {
-                        let next = self.pending_count.unwrap_or(0).saturating_mul(10) + digit;
-                        self.pending_count = Some(next.min(99));
-                    }
-                }
-                KeyCode::Left | KeyCode::Char('h') => self.move_steps(-1, 0),
-                KeyCode::Right | KeyCode::Char('l') => self.move_steps(1, 0),
-                KeyCode::Up | KeyCode::Char('k') => self.move_steps(0, -1),
-                KeyCode::Down | KeyCode::Char('j') => self.move_steps(0, 1),
                 KeyCode::Enter | KeyCode::Char(' ') => {
-                    self.pending_count = None;
+                    self.nav.clear();
                     return self.tag();
                 }
+                KeyCode::Esc => self.nav.clear(),
                 _ => {}
             }
         }
@@ -182,7 +160,7 @@ impl AimTrainerState {
     }
 
     pub fn status_line(&self) -> String {
-        if self.finished {
+        let base = if self.finished {
             self.status.clone()
         } else {
             format!(
@@ -193,6 +171,11 @@ impl AimTrainerState {
                 self.cursor.1 + 1,
                 (Instant::now() - self.run_start).as_secs_f64()
             )
+        };
+        if let Some(count) = self.nav.prefix() {
+            format!("{} · count {}", base, count)
+        } else {
+            base
         }
     }
 }
