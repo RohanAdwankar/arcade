@@ -71,7 +71,7 @@ impl ReactionState {
                     self.best_ms = Some(ms);
                     return Some(GameAction::Record(
                         StatRecord {
-                            label: "Best",
+                            label: "Best".into(),
                             value: format!("{ms} ms"),
                         },
                         GameKind::Reaction,
@@ -140,7 +140,7 @@ impl ReactionState {
         if let Phase::Waiting { start, delay } = self.phase {
             if now.duration_since(start) >= delay {
                 self.phase = Phase::Go { start: now };
-                self.status = "GO!".into();
+                self.status = "Tap now!".into();
             }
         }
         GameAction::None

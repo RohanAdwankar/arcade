@@ -69,7 +69,7 @@ impl AimTrainerState {
                     self.best_avg = Some(avg_ms);
                     return GameAction::Record(
                         StatRecord {
-                            label: "Avg",
+                            label: "Avg".into(),
                             value: format!("{avg_ms:.0} ms"),
                         },
                         GameKind::AimTrainer,

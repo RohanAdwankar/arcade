@@ -22,6 +22,7 @@ pub struct ChimpTestState {
     rng: StdRng,
     phase: Phase,
     status: String,
+    numbers_hidden: bool,
 }
 
 #[derive(Debug)]
@@ -52,6 +53,7 @@ impl ChimpTestState {
                 start: Instant::now(),
             },
             status: "Memorize the numbers".into(),
+            numbers_hidden: false,
         };
         state.generate_tiles();
         state
@@ -60,6 +62,7 @@ impl ChimpTestState {
     fn generate_tiles(&mut self) {
         self.tiles.clear();
         self.next_value = 1;
+        self.numbers_hidden = false;
         let count = BASE_NUMBERS + self.level;
         let mut positions = Vec::new();
         for x in 0..GRID {
@@ -98,12 +101,15 @@ impl ChimpTestState {
             if value == self.next_value {
                 self.tiles[idx].cleared = true;
                 self.next_value += 1;
+                if value == 1 {
+                    self.numbers_hidden = true;
+                }
                 if self.tiles.iter().all(|t| t.cleared) {
                     self.level += 1;
                     if self.level > self.best {
                         self.best = self.level;
                         let record = StatRecord {
-                            label: "Level",
+                            label: "Level".into(),
                             value: self.best.to_string(),
                         };
                         self.generate_tiles();
@@ -141,7 +147,9 @@ impl ChimpTestState {
                     row.push('[');
                 }
                 if let Some(tile) = self.tiles.iter().find(|t| t.pos == (x, y)) {
-                    let show_number = matches!(self.phase, Phase::Reveal { .. }) || !tile.cleared;
+                    let numbers_visible = matches!(self.phase, Phase::Reveal { .. })
+                        || (!self.numbers_hidden && !tile.cleared);
+                    let show_number = numbers_visible;
                     if show_number {
                         row.push(char::from_digit(tile.value as u32, 10).unwrap_or('*'));
                     } else {

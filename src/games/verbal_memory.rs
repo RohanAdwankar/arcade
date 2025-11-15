@@ -58,7 +58,7 @@ impl VerbalMemoryState {
             if self.score > self.best {
                 self.best = self.score;
                 let record = StatRecord {
-                    label: "Score",
+                    label: "Score".into(),
                     value: self.best.to_string(),
                 };
                 self.next_word();

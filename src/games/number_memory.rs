@@ -62,7 +62,7 @@ impl NumberMemoryState {
                 self.best_round = self.round - 1;
                 return GameAction::Record(
                     StatRecord {
-                        label: "Digits",
+                        label: "Digits".into(),
                         value: format!("{}", self.best_round),
                     },
                     GameKind::NumberMemory,
@@ -92,7 +92,7 @@ impl NumberMemoryState {
                 lines.push(Line::from(format!("Type: {}", self.input)));
             }
             Phase::Reveal { .. } => lines.push(Line::from(format!("Number: {}", self.number))),
-            _ => lines.push(Line::from(self.status.as_str())),
+            _ => {}
         }
         lines.push(Line::from(self.status.as_str()));
         frame.render_widget(Paragraph::new(lines), inner);

@@ -65,7 +65,7 @@ impl TypingState {
             self.wpm_best = wpm;
             return GameAction::Record(
                 StatRecord {
-                    label: "WPM",
+                    label: "WPM".into(),
                     value: format!("{wpm:.1}"),
                 },
                 GameKind::Typing,
@@ -108,8 +108,14 @@ impl TypingState {
                         self.typed.pop();
                     }
                 }
-                KeyCode::Enter if self.finished.is_some() => {
-                    self.restart();
+                KeyCode::Enter => {
+                    if self.finished.is_some() {
+                        self.restart();
+                    } else if self.typed.trim_end() == self.prompt {
+                        return self.complete();
+                    } else {
+                        self.status = "Keep typing until it matches".into();
+                    }
                 }
                 _ => {}
             }

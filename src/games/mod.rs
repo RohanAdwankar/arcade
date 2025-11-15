@@ -3,6 +3,7 @@ use std::time::Instant;
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub mod aim;
 pub mod chimp_test;
@@ -13,7 +14,7 @@ pub mod typing_game;
 pub mod verbal_memory;
 pub mod visual_memory;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GameKind {
     Reaction,
     Sequence,
@@ -64,9 +65,9 @@ impl GameKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatRecord {
-    pub label: &'static str,
+    pub label: String,
     pub value: String,
 }
 

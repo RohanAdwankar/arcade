@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyCode};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use ratatui::prelude::*;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::{GameAction, GameKind, StatRecord};
@@ -97,7 +97,7 @@ impl VisualMemoryState {
             if self.round - 1 > self.best {
                 self.best = self.round - 1;
                 let record = StatRecord {
-                    label: "Round",
+                    label: "Round".into(),
                     value: self.best.to_string(),
                 };
                 self.generate_pattern();
@@ -131,22 +131,24 @@ impl VisualMemoryState {
         ))];
         lines.push(Line::from(self.status.as_str()));
         for y in 0..GRID {
-            let mut row = String::new();
+            let mut spans = Vec::with_capacity(GRID * 2);
             for x in 0..GRID {
                 let filled = match self.phase {
                     Phase::Reveal { .. } => self.pattern.contains(&(x, y)),
                     _ => self.guesses.contains(&(x, y)),
                 };
-                if (x, y) == self.cursor {
-                    row.push('[');
-                }
-                row.push(if filled { '■' } else { '·' });
-                if (x, y) == self.cursor {
-                    row.push(']');
-                }
-                row.push(' ');
+                let ch = if filled { "■" } else { "·" };
+                let style = if (x, y) == self.cursor {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(ch, style));
+                spans.push(Span::raw(" "));
             }
-            lines.push(Line::from(row));
+            lines.push(Line::from(spans));
         }
         frame.render_widget(Paragraph::new(lines), inner);
     }

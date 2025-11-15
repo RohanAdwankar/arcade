@@ -83,7 +83,7 @@ impl SequenceState {
         if completed > self.best {
             self.best = completed;
             let record = StatRecord {
-                label: "Pattern",
+                label: "Pattern".into(),
                 value: format!("{} steps", completed),
             };
             let dir = self.random_direction();
