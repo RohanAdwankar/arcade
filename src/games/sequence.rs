@@ -1,101 +1,109 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use ratatui::prelude::*;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::{GameAction, GameKind, StatRecord};
 
+const GRID: usize = 3;
+const FLASH_ON: Duration = Duration::from_millis(450);
+const FLASH_OFF: Duration = Duration::from_millis(180);
+
 #[derive(Debug)]
 pub struct SequenceState {
-    sequence: Vec<Direction>,
-    index: usize,
+    sequence: Vec<(usize, usize)>,
+    cursor: (usize, usize),
+    idx: usize,
     best: usize,
-    status: String,
     rng: StdRng,
+    phase: Phase,
+    status: String,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl Direction {
-    fn glyph(self) -> &'static str {
-        match self {
-            Direction::Up => "↑",
-            Direction::Down => "↓",
-            Direction::Left => "←",
-            Direction::Right => "→",
-        }
-    }
-
-    fn matches_key(self, key: &KeyCode) -> bool {
-        match (self, key) {
-            (Direction::Up, KeyCode::Up | KeyCode::Char('k')) => true,
-            (Direction::Down, KeyCode::Down | KeyCode::Char('j')) => true,
-            (Direction::Left, KeyCode::Left | KeyCode::Char('h')) => true,
-            (Direction::Right, KeyCode::Right | KeyCode::Char('l')) => true,
-            _ => false,
-        }
-    }
+enum Phase {
+    Showing {
+        step: usize,
+        visible: bool,
+        since: Instant,
+    },
+    Input,
 }
 
 impl SequenceState {
     pub fn new() -> Self {
-        let rng = StdRng::from_entropy();
-        let mut state = Self {
-            sequence: Vec::new(),
-            index: 0,
+        let mut rng = StdRng::from_entropy();
+        let seq = vec![random_cell(&mut rng)];
+        Self {
+            sequence: seq,
+            cursor: (0, 0),
+            idx: 0,
             best: 0,
-            status: "Use hjkl/arrow keys to repeat the pattern".into(),
             rng,
+            phase: Phase::Showing {
+                step: 0,
+                visible: true,
+                since: Instant::now(),
+            },
+            status: "Watch the pattern".into(),
+        }
+    }
+
+    fn start_show(&mut self) {
+        self.idx = 0;
+        self.phase = Phase::Showing {
+            step: 0,
+            visible: true,
+            since: Instant::now(),
         };
-        let dir = state.random_direction();
-        state.sequence.push(dir);
-        state
+        self.status = format!("Watch the pattern ({} tiles)", self.sequence.len());
     }
 
-    fn random_direction(&mut self) -> Direction {
-        match self.rng.gen_range(0..4) {
-            0 => Direction::Up,
-            1 => Direction::Right,
-            2 => Direction::Down,
-            _ => Direction::Left,
+    fn begin_new_round(&mut self, advance: bool) -> GameAction {
+        if advance {
+            self.sequence.push(random_cell(&mut self.rng));
+        } else if self.sequence.is_empty() {
+            self.sequence.push(random_cell(&mut self.rng));
         }
+        self.start_show();
+        GameAction::None
     }
 
-    fn reset(&mut self) {
-        self.sequence.clear();
-        let dir = self.random_direction();
-        self.sequence.push(dir);
-        self.index = 0;
-        self.status = "Pattern reset".into();
-    }
-
-    fn extend_sequence(&mut self) -> GameAction {
-        let completed = self.sequence.len();
-        if completed > self.best {
-            self.best = completed;
-            let record = StatRecord {
-                label: "Pattern".into(),
-                value: format!("{} steps", completed),
-            };
-            let dir = self.random_direction();
-            self.sequence.push(dir);
-            self.index = 0;
-            self.status = format!("Round cleared! Sequence length {}", self.sequence.len());
-            return GameAction::Record(record, GameKind::Sequence);
+    fn handle_selection(&mut self) -> GameAction {
+        if !matches!(self.phase, Phase::Input) {
+            return GameAction::None;
         }
-        let dir = self.random_direction();
-        self.sequence.push(dir);
-        self.index = 0;
-        self.status = format!("Sequence extended to {}", self.sequence.len());
+        if let Some(expected) = self.sequence.get(self.idx) {
+            if *expected == self.cursor {
+                self.idx += 1;
+                if self.idx == self.sequence.len() {
+                    let completed = self.sequence.len();
+                    if completed > self.best {
+                        self.best = completed;
+                        let record = StatRecord {
+                            label: "Pattern".into(),
+                            value: completed.to_string(),
+                        };
+                        self.begin_new_round(true);
+                        return GameAction::Record(record, GameKind::Sequence);
+                    }
+                    self.begin_new_round(true);
+                } else {
+                    self.status = format!("{} / {}", self.idx, self.sequence.len());
+                }
+            } else {
+                if self.sequence.len().saturating_sub(1) > self.best {
+                    self.best = self.sequence.len() - 1;
+                }
+                self.status = "Wrong square! Starting over".into();
+                self.sequence.clear();
+                self.idx = 0;
+                self.begin_new_round(false);
+            }
+        }
         GameAction::None
     }
 
@@ -107,70 +115,89 @@ impl SequenceState {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let arrow_string = self
-            .sequence
-            .iter()
-            .enumerate()
-            .map(|(idx, dir)| {
-                if idx == self.index {
-                    format!("[{}]", dir.glyph())
-                } else {
-                    dir.glyph().to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        let mut lines = vec![
-            Line::from("Remember the directions"),
-            Line::from(arrow_string),
-        ];
-        lines.push(Line::from(format!(
-            "Progress {}/{}",
-            self.index + 1,
-            self.sequence.len()
-        )));
-        lines.push(Line::from(format!("Session best: {}", self.best)));
+        let mut lines = vec![Line::from(format!(
+            "Sequence length {} · Best {}",
+            self.sequence.len(),
+            self.best
+        ))];
         lines.push(Line::from(self.status.as_str()));
+        let flash_cell = match self.phase {
+            Phase::Showing { step, visible, .. } if visible => self.sequence.get(step).copied(),
+            _ => None,
+        };
+        for y in 0..GRID {
+            let mut spans = Vec::with_capacity(GRID * 2);
+            for x in 0..GRID {
+                let mut style = Style::default();
+                if Some((x, y)) == flash_cell {
+                    style = style
+                        .bg(Color::Yellow)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD);
+                } else if matches!(self.phase, Phase::Input) && (x, y) == self.cursor {
+                    style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                }
+                spans.push(Span::styled("■", style));
+                spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(spans));
+        }
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
     pub fn handle_event(&mut self, event: &Event) -> GameAction {
         if let Event::Key(key) = event {
-            if let Some(expected) = self.sequence.get(self.index).copied() {
-                if expected.matches_key(&key.code) {
-                    self.index += 1;
-                    if self.index == self.sequence.len() {
-                        return self.extend_sequence();
-                    }
-                } else if matches!(
-                    key.code,
-                    KeyCode::Char('h' | 'j' | 'k' | 'l')
-                        | KeyCode::Left
-                        | KeyCode::Right
-                        | KeyCode::Up
-                        | KeyCode::Down
-                ) {
-                    self.status = "Wrong move! Starting over".into();
-                    if self.sequence.len().saturating_sub(1) > self.best {
-                        self.best = self.sequence.len() - 1;
-                    }
-                    self.reset();
+            match key.code {
+                KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
+                KeyCode::Right | KeyCode::Char('l') => self.move_cursor(1, 0),
+                KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
+                KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
+                KeyCode::Enter | KeyCode::Char(' ') => return self.handle_selection(),
+                _ => {}
+            }
+        }
+        GameAction::None
+    }
+
+    fn move_cursor(&mut self, dx: isize, dy: isize) {
+        let (mut x, mut y) = self.cursor;
+        x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
+        y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
+        self.cursor = (x, y);
+    }
+
+    pub fn handle_tick(&mut self, now: Instant) -> GameAction {
+        if let Phase::Showing {
+            step,
+            visible,
+            since,
+        } = &mut self.phase
+        {
+            if *visible && now.duration_since(*since) >= FLASH_ON {
+                *visible = false;
+                *since = now;
+            } else if !*visible && now.duration_since(*since) >= FLASH_OFF {
+                *since = now;
+                if *step + 1 >= self.sequence.len() {
+                    self.phase = Phase::Input;
+                    self.status = "Repeat the pattern".into();
+                } else {
+                    *step += 1;
+                    *visible = true;
                 }
             }
         }
         GameAction::None
     }
 
-    pub fn handle_tick(&mut self, _now: Instant) -> GameAction {
-        GameAction::None
-    }
-
     pub fn status_line(&self) -> String {
-        format!(
-            "Sequence length {} · progress {}/{}",
-            self.sequence.len(),
-            self.index + 1,
-            self.sequence.len()
-        )
+        match self.phase {
+            Phase::Input => format!("Repeat {}/{}", self.idx + 1, self.sequence.len()),
+            Phase::Showing { .. } => format!("Showing pattern ({} tiles)", self.sequence.len()),
+        }
     }
+}
+
+fn random_cell(rng: &mut StdRng) -> (usize, usize) {
+    (rng.gen_range(0..GRID), rng.gen_range(0..GRID))
 }

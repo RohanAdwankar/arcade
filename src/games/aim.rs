@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::{GameAction, GameKind, StatRecord};
 
-const GRID: usize = 5;
+const GRID: usize = 16;
 const TARGETS: u32 = 10;
 
 #[derive(Debug)]
@@ -18,10 +18,12 @@ pub struct AimTrainerState {
     hits: u32,
     total_time: Duration,
     spawn: Instant,
+    run_start: Instant,
     rng: StdRng,
     finished: bool,
-    best_avg: Option<f64>,
+    best_total_ms: Option<f64>,
     status: String,
+    pending_count: Option<usize>,
 }
 
 impl AimTrainerState {
@@ -34,18 +36,26 @@ impl AimTrainerState {
             hits: 0,
             total_time: Duration::ZERO,
             spawn: Instant::now(),
+            run_start: Instant::now(),
             rng,
             finished: false,
-            best_avg: None,
-            status: "Move with hjkl · enter to tag".into(),
+            best_total_ms: None,
+            status: "Move with hjkl · counts like 3j work".into(),
+            pending_count: None,
         }
     }
 
-    fn move_cursor(&mut self, dx: isize, dy: isize) {
-        let (mut x, mut y) = self.cursor;
-        x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
-        y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
-        self.cursor = (x, y);
+    fn move_steps(&mut self, dx: isize, dy: isize) {
+        let steps = self.pending_count.take().unwrap_or(1).min(GRID);
+        for _ in 0..steps {
+            let (mut x, mut y) = self.cursor;
+            x = ((x as isize + dx).clamp(0, (GRID - 1) as isize)) as usize;
+            y = ((y as isize + dy).clamp(0, (GRID - 1) as isize)) as usize;
+            if (x, y) == self.cursor {
+                break;
+            }
+            self.cursor = (x, y);
+        }
     }
 
     fn spawn_target(&mut self) {
@@ -63,14 +73,22 @@ impl AimTrainerState {
             self.hits += 1;
             if self.hits == TARGETS {
                 self.finished = true;
-                let avg_ms = self.total_time.as_secs_f64() * 1000.0 / TARGETS as f64;
-                self.status = format!("Complete! avg {:.0} ms", avg_ms);
-                if self.best_avg.map(|best| avg_ms < best).unwrap_or(true) {
-                    self.best_avg = Some(avg_ms);
+                let total_ms = self.total_time.as_secs_f64() * 1000.0;
+                self.status = format!(
+                    "Complete! total {:.0} ms (avg {:.0} ms)",
+                    total_ms,
+                    total_ms / TARGETS as f64
+                );
+                if self
+                    .best_total_ms
+                    .map(|best| total_ms < best)
+                    .unwrap_or(true)
+                {
+                    self.best_total_ms = Some(total_ms);
                     return GameAction::Record(
                         StatRecord {
-                            label: "Avg".into(),
-                            value: format!("{avg_ms:.0} ms"),
+                            label: "Total".into(),
+                            value: format!("{total_ms:.0} ms"),
                         },
                         GameKind::AimTrainer,
                     );
@@ -93,8 +111,22 @@ impl AimTrainerState {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let mut lines = vec![Line::from(format!("Hits: {}/{}", self.hits, TARGETS))];
+        let elapsed_ms = if self.finished {
+            self.total_time.as_secs_f64() * 1000.0
+        } else {
+            (Instant::now() - self.run_start).as_secs_f64() * 1000.0
+        };
+        let mut lines = vec![Line::from(format!(
+            "Hits: {}/{} · Elapsed {:.0} ms",
+            self.hits, TARGETS, elapsed_ms
+        ))];
         lines.push(Line::from(self.status.as_str()));
+        if let Some(best) = self.best_total_ms {
+            lines.push(Line::from(format!("Best run: {:.0} ms", best)));
+        }
+        if let Some(count) = self.pending_count {
+            lines.push(Line::from(format!("Count prefix: {}", count)));
+        }
 
         let mut grid_lines = Vec::new();
         for y in 0..GRID {
@@ -122,11 +154,23 @@ impl AimTrainerState {
     pub fn handle_event(&mut self, event: &Event) -> GameAction {
         if let Event::Key(key) = event {
             match key.code {
-                KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
-                KeyCode::Right | KeyCode::Char('l') => self.move_cursor(1, 0),
-                KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
-                KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
-                KeyCode::Enter | KeyCode::Char(' ') => return self.tag(),
+                KeyCode::Char(ch) if ch.is_ascii_digit() => {
+                    let digit = ch.to_digit(10).unwrap() as usize;
+                    if digit == 0 && self.pending_count.is_none() {
+                        // noop, like vim
+                    } else {
+                        let next = self.pending_count.unwrap_or(0).saturating_mul(10) + digit;
+                        self.pending_count = Some(next.min(99));
+                    }
+                }
+                KeyCode::Left | KeyCode::Char('h') => self.move_steps(-1, 0),
+                KeyCode::Right | KeyCode::Char('l') => self.move_steps(1, 0),
+                KeyCode::Up | KeyCode::Char('k') => self.move_steps(0, -1),
+                KeyCode::Down | KeyCode::Char('j') => self.move_steps(0, 1),
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.pending_count = None;
+                    return self.tag();
+                }
                 _ => {}
             }
         }
@@ -142,11 +186,12 @@ impl AimTrainerState {
             self.status.clone()
         } else {
             format!(
-                "Target {}/{} · cursor ({}, {})",
+                "Target {}/{} · cursor ({}, {}) · elapsed {:.1}s",
                 self.hits + 1,
                 TARGETS,
                 self.cursor.0 + 1,
-                self.cursor.1 + 1
+                self.cursor.1 + 1,
+                (Instant::now() - self.run_start).as_secs_f64()
             )
         }
     }

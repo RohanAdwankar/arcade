@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyCode};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use ratatui::prelude::*;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::{GameAction, GameKind, StatRecord};
@@ -141,29 +141,30 @@ impl ChimpTestState {
         lines.push(Line::from(self.status.as_str()));
 
         for y in 0..GRID {
-            let mut row = String::new();
+            let mut spans = Vec::with_capacity(GRID * 2);
             for x in 0..GRID {
-                if Some((x, y)) == Some(self.cursor) {
-                    row.push('[');
-                }
-                if let Some(tile) = self.tiles.iter().find(|t| t.pos == (x, y)) {
+                let ch = if let Some(tile) = self.tiles.iter().find(|t| t.pos == (x, y)) {
                     let numbers_visible = matches!(self.phase, Phase::Reveal { .. })
                         || (!self.numbers_hidden && !tile.cleared);
-                    let show_number = numbers_visible;
-                    if show_number {
-                        row.push(char::from_digit(tile.value as u32, 10).unwrap_or('*'));
+                    if numbers_visible {
+                        char::from_digit(tile.value as u32, 10).unwrap_or('*')
                     } else {
-                        row.push('·');
+                        '·'
                     }
                 } else {
-                    row.push('·');
-                }
-                if Some((x, y)) == Some(self.cursor) {
-                    row.push(']');
-                }
-                row.push(' ');
+                    '·'
+                };
+                let style = if (x, y) == self.cursor {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(ch.to_string(), style));
+                spans.push(Span::raw(" "));
             }
-            lines.push(Line::from(row));
+            lines.push(Line::from(spans));
         }
         frame.render_widget(Paragraph::new(lines), inner);
     }
