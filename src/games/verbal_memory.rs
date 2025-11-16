@@ -24,6 +24,7 @@ pub struct VerbalMemoryState {
     lives: u8,
     best: u32,
     status: String,
+    pending_best: Option<u32>,
 }
 
 impl VerbalMemoryState {
@@ -38,6 +39,7 @@ impl VerbalMemoryState {
             lives: 3,
             best: 0,
             status: "Press l for NEW, h for SEEN".into(),
+            pending_best: None,
         }
     }
 
@@ -57,15 +59,16 @@ impl VerbalMemoryState {
             self.seen.insert(self.current);
             if self.score > self.best {
                 self.best = self.score;
-                let record = StatRecord::new("Score", self.best.to_string(), self.best as f64);
-                self.next_word();
-                return GameAction::Record(record, GameKind::VerbalMemory);
+                self.pending_best = Some(self.best);
             }
         } else {
             self.status = "Wrong!".into();
             self.lives = self.lives.saturating_sub(1);
             if self.lives == 0 {
                 self.status = format!("Game over · final score {}", self.score);
+                let action = self.flush_pending_record();
+                self.next_word();
+                return action;
             }
         }
         self.next_word();
@@ -101,6 +104,7 @@ impl VerbalMemoryState {
                 KeyCode::Char('h') | KeyCode::Left => return self.evaluate(true),
                 KeyCode::Char('l') | KeyCode::Right => return self.evaluate(false),
                 KeyCode::Enter if self.lives == 0 => {
+                    self.pending_best = None;
                     *self = Self::new();
                 }
                 _ => {}
@@ -115,5 +119,14 @@ impl VerbalMemoryState {
 
     pub fn status_line(&self) -> String {
         format!("Score {} · Lives {}", self.score, self.lives)
+    }
+
+    fn flush_pending_record(&mut self) -> GameAction {
+        if let Some(score) = self.pending_best.take() {
+            let record = StatRecord::new("Score", score.to_string(), score as f64);
+            GameAction::Record(record, GameKind::VerbalMemory)
+        } else {
+            GameAction::None
+        }
     }
 }
