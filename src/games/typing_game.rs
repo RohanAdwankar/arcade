@@ -181,7 +181,7 @@ impl TypingState {
         );
         let finish_time = self.started.unwrap_or_else(Instant::now) + elapsed;
         self.finished = Some(finish_time);
-        if wpm > self.wpm_best {
+        if acc >= 80.0 && wpm > self.wpm_best {
             self.wpm_best = wpm;
             return GameAction::Record(
                 StatRecord::new("WPM", format!("{wpm:.1}"), wpm),

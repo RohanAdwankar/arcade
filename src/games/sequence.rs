@@ -18,6 +18,7 @@ pub struct SequenceState {
     cursor: (usize, usize),
     idx: usize,
     best: usize,
+    pending_best: Option<usize>,
     rng: StdRng,
     phase: Phase,
     status: String,
@@ -42,6 +43,7 @@ impl SequenceState {
             cursor: (0, 0),
             idx: 0,
             best: 0,
+            pending_best: None,
             rng,
             phase: Phase::Showing {
                 step: 0,
@@ -83,10 +85,7 @@ impl SequenceState {
                     let completed = self.sequence.len();
                     if completed > self.best {
                         self.best = completed;
-                        let record =
-                            StatRecord::new("Pattern", completed.to_string(), completed as f64);
-                        self.begin_new_round(true);
-                        return GameAction::Record(record, GameKind::Sequence);
+                        self.pending_best = Some(completed);
                     }
                     self.begin_new_round(true);
                 } else {
@@ -95,11 +94,16 @@ impl SequenceState {
             } else {
                 if self.sequence.len().saturating_sub(1) > self.best {
                     self.best = self.sequence.len() - 1;
+                    self.pending_best = Some(self.best);
                 }
+                let record = self.flush_pending_record();
                 self.status = "Wrong square! Starting over".into();
                 self.sequence.clear();
                 self.idx = 0;
                 self.begin_new_round(false);
+                if !matches!(record, GameAction::None) {
+                    return record;
+                }
             }
         }
         GameAction::None
@@ -192,6 +196,17 @@ impl SequenceState {
         match self.phase {
             Phase::Input => format!("Repeat {}/{}", self.idx + 1, self.sequence.len()),
             Phase::Showing { .. } => format!("Showing pattern ({} tiles)", self.sequence.len()),
+        }
+    }
+
+    fn flush_pending_record(&mut self) -> GameAction {
+        if let Some(score) = self.pending_best.take() {
+            GameAction::Record(
+                StatRecord::new("Pattern", score.to_string(), score as f64),
+                GameKind::Sequence,
+            )
+        } else {
+            GameAction::None
         }
     }
 }
