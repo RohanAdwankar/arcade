@@ -20,6 +20,7 @@ const ENEMY_BASE_SPEED: f32 = 1.4;
 const ENEMY_SPEED_STEP: f32 = 0.08;
 const MAX_DEPTH: f32 = 20.0;
 const TURN_STEP: f32 = TAU / 48.0;
+const FIRE_FLASH_MS: u64 = 120;
 
 static PISTOL_ART: Lazy<Vec<String>> = Lazy::new(|| {
     include_str!("../../assets/pistol.txt")
@@ -55,21 +56,6 @@ fn weapon_lines(field_cols: usize) -> Vec<Line<'static>> {
             Line::from(owned)
         })
         .collect()
-}
-
-fn crosshair_lines(field_cols: usize) -> Vec<Line<'static>> {
-    let cols = field_cols.max(1);
-    let center = cols / 2;
-    let mut upper = vec![' '; cols];
-    let mut lower = vec![' '; cols];
-    if center < cols {
-        upper[center] = '|';
-        lower[center] = '+';
-    }
-    vec![
-        Line::from(upper.into_iter().collect::<String>()),
-        Line::from(lower.into_iter().collect::<String>()),
-    ]
 }
 
 const FAR_SPRITE: [&str; 1] = [r"  ·  "];
@@ -181,6 +167,8 @@ pub struct ShooterState {
     status: String,
     best_survival: Option<Duration>,
     heading: f32,
+    last_fire: Option<Instant>,
+    frozen_elapsed: Option<Duration>,
 }
 
 impl ShooterState {
@@ -198,11 +186,17 @@ impl ShooterState {
             status: "Rotate with A/D · h/l · ←/→ · space fires".into(),
             best_survival: None,
             heading: 0.0,
+            last_fire: None,
+            frozen_elapsed: None,
         }
     }
 
     fn elapsed(&self, now: Instant) -> Duration {
-        now.saturating_duration_since(self.start_time)
+        if let Some(frozen) = self.frozen_elapsed {
+            frozen
+        } else {
+            now.saturating_duration_since(self.start_time)
+        }
     }
 
     fn spawn_interval(&self) -> Duration {
@@ -247,6 +241,7 @@ impl ShooterState {
         if !self.alive {
             return;
         }
+        self.last_fire = Some(Instant::now());
         let mut hit_index: Option<usize> = None;
         let mut best_distance = f32::MAX;
         for (idx, enemy) in self.enemies.iter().enumerate() {
@@ -277,6 +272,7 @@ impl ShooterState {
         }
         self.alive = false;
         let elapsed = self.elapsed(now);
+        self.frozen_elapsed = Some(elapsed);
         self.status = format!("Overrun after {:.1}s", elapsed.as_secs_f64());
         if self
             .best_survival
@@ -307,6 +303,8 @@ impl ShooterState {
         self.last_spawn = now;
         self.status = "Rotate with A/D · h/l · ←/→ · space fires".into();
         self.heading = 0.0;
+        self.last_fire = None;
+        self.frozen_elapsed = None;
     }
 
     fn render_field(&self, cols: usize) -> Vec<Line<'static>> {
@@ -360,8 +358,8 @@ impl ShooterState {
     fn tick_internal(&mut self, now: Instant) -> Option<GameAction> {
         let dt = now.saturating_duration_since(self.last_tick).as_secs_f32();
         self.last_tick = now;
-        self.maybe_spawn(now);
         if self.alive {
+            self.maybe_spawn(now);
             for enemy in &mut self.enemies {
                 enemy.update(self.player, dt);
             }
@@ -407,7 +405,7 @@ impl ShooterState {
 
         lines.push(Line::from("-".repeat(field_cols.max(1))));
         lines.extend(self.render_field(field_cols));
-        lines.extend(crosshair_lines(field_cols));
+        lines.extend(self.crosshair_lines(field_cols));
         lines.extend(weapon_lines(field_cols));
 
         frame.render_widget(Paragraph::new(lines), inner);
@@ -432,6 +430,29 @@ impl ShooterState {
             }
         }
         GameAction::None
+    }
+
+    fn firing_flash(&self, now: Instant) -> bool {
+        if let Some(last) = self.last_fire {
+            return now.duration_since(last).as_millis() < FIRE_FLASH_MS as u128;
+        }
+        false
+    }
+
+    fn crosshair_lines(&self, field_cols: usize) -> Vec<Line<'static>> {
+        let cols = field_cols.max(1);
+        let center = cols / 2;
+        let flash = self.firing_flash(Instant::now());
+        let mut upper = vec![' '; cols];
+        let mut lower = vec![' '; cols];
+        if center < cols {
+            upper[center] = if flash { '·' } else { '|' };
+            lower[center] = if flash { '•' } else { '+' };
+        }
+        vec![
+            Line::from(upper.into_iter().collect::<String>()),
+            Line::from(lower.into_iter().collect::<String>()),
+        ]
     }
 
     pub fn handle_tick(&mut self, now: Instant) -> GameAction {
