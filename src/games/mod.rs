@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod aim;
 pub mod chimp_test;
+pub mod fps;
 pub mod navigation;
 pub mod number_memory;
 pub mod reaction;
@@ -25,10 +26,11 @@ pub enum GameKind {
     ChimpTest,
     VisualMemory,
     Typing,
+    Shooter,
 }
 
 impl GameKind {
-    pub const ALL: [GameKind; 8] = [
+    pub const ALL: [GameKind; 9] = [
         GameKind::Reaction,
         GameKind::Sequence,
         GameKind::AimTrainer,
@@ -37,6 +39,7 @@ impl GameKind {
         GameKind::ChimpTest,
         GameKind::VisualMemory,
         GameKind::Typing,
+        GameKind::Shooter,
     ];
 
     pub fn title(self) -> &'static str {
@@ -49,6 +52,7 @@ impl GameKind {
             GameKind::ChimpTest => "Chimp Test",
             GameKind::VisualMemory => "Visual Memory",
             GameKind::Typing => "Typing",
+            GameKind::Shooter => "Terminal FPS",
         }
     }
 
@@ -62,6 +66,7 @@ impl GameKind {
             GameKind::ChimpTest => "Select numbers in ascending order.",
             GameKind::VisualMemory => "Remember highlighted tiles.",
             GameKind::Typing => "Type the prompt as quickly as you can.",
+            GameKind::Shooter => "Survive an ASCII FPS horde with precise shots.",
         }
     }
 
@@ -73,7 +78,8 @@ impl GameKind {
             | GameKind::VerbalMemory
             | GameKind::ChimpTest
             | GameKind::VisualMemory
-            | GameKind::Typing => ScoreDirection::HigherIsBetter,
+            | GameKind::Typing
+            | GameKind::Shooter => ScoreDirection::HigherIsBetter,
         }
     }
 }
@@ -123,6 +129,7 @@ pub enum GameState {
     Chimp(chimp_test::ChimpTestState),
     Visual(visual_memory::VisualMemoryState),
     Typing(typing_game::TypingState),
+    Shooter(fps::ShooterState),
 }
 
 impl GameState {
@@ -136,6 +143,7 @@ impl GameState {
             GameKind::ChimpTest => Self::Chimp(chimp_test::ChimpTestState::new()),
             GameKind::VisualMemory => Self::Visual(visual_memory::VisualMemoryState::new()),
             GameKind::Typing => Self::Typing(typing_game::TypingState::new()),
+            GameKind::Shooter => Self::Shooter(fps::ShooterState::new()),
         }
     }
 
@@ -149,6 +157,7 @@ impl GameState {
             GameState::Chimp(_) => GameKind::ChimpTest,
             GameState::Visual(_) => GameKind::VisualMemory,
             GameState::Typing(_) => GameKind::Typing,
+            GameState::Shooter(_) => GameKind::Shooter,
         }
     }
 
@@ -162,6 +171,7 @@ impl GameState {
             GameState::Chimp(state) => state.render(frame, area),
             GameState::Visual(state) => state.render(frame, area),
             GameState::Typing(state) => state.render(frame, area),
+            GameState::Shooter(state) => state.render(frame, area),
         }
     }
 
@@ -175,6 +185,7 @@ impl GameState {
             GameState::Chimp(state) => state.handle_event(event),
             GameState::Visual(state) => state.handle_event(event),
             GameState::Typing(state) => state.handle_event(event),
+            GameState::Shooter(state) => state.handle_event(event),
         }
     }
 
@@ -188,6 +199,7 @@ impl GameState {
             GameState::Chimp(state) => state.handle_tick(now),
             GameState::Visual(state) => state.handle_tick(now),
             GameState::Typing(state) => state.handle_tick(now),
+            GameState::Shooter(state) => state.handle_tick(now),
         }
     }
 
@@ -201,6 +213,7 @@ impl GameState {
             GameState::Chimp(state) => state.status_line(),
             GameState::Visual(state) => state.status_line(),
             GameState::Typing(state) => state.status_line(),
+            GameState::Shooter(state) => state.status_line(),
         }
     }
 }
