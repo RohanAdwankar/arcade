@@ -15,7 +15,13 @@ pub fn render(frame: &mut Frame, area: Rect, ctx: HudContext<'_>) {
         .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
-    let mut text = vec![Line::from(ctx.primary), Line::from(ctx.secondary)];
+    let mut text = Vec::new();
+    if !ctx.primary.is_empty() {
+        text.push(Line::from(ctx.primary));
+    }
+    if !ctx.secondary.is_empty() {
+        text.push(Line::from(ctx.secondary));
+    }
 
     if let Some(command) = ctx.command {
         text.push(Line::from(Span::styled(
@@ -31,6 +37,10 @@ pub fn render(frame: &mut Frame, area: Rect, ctx: HudContext<'_>) {
             toast,
             Style::default().fg(Color::LightGreen),
         )));
+    }
+
+    if text.is_empty() {
+        text.push(Line::from(""));
     }
 
     let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });

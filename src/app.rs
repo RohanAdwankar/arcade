@@ -26,6 +26,7 @@ pub struct App {
     toast: Option<Toast>,
     command: Option<CommandPalette>,
     stats_path: Option<PathBuf>,
+    show_help: bool,
 }
 
 impl Default for App {
@@ -45,6 +46,7 @@ impl Default for App {
             toast: None,
             command: None,
             stats_path,
+            show_help: false,
         }
     }
 }
@@ -150,6 +152,11 @@ impl App {
                     self.toast = Some(Toast::new(format!("Restarted {}", kind.title())));
                 }
             }
+            "help" => {
+                self.show_help = !self.show_help;
+                let state = if self.show_help { "shown" } else { "hidden" };
+                self.toast = Some(Toast::new(format!("Controls {state}")));
+            }
             other if other.is_empty() => {}
             other => {
                 self.toast = Some(Toast::new(format!("Unknown command :{other}")));
@@ -213,15 +220,24 @@ impl App {
             self.menu.render(frame, areas[0], &self.stats);
         }
 
-        let status_line = if let Some(active) = &self.active {
-            active.status_line()
+        let status_line = if self.show_help {
+            Some(if let Some(active) = &self.active {
+                active.status_line()
+            } else {
+                self.menu.status_line()
+            })
         } else {
-            self.menu.status_line()
+            None
         };
-        let help_line = if self.active.is_some() {
-            "hjkl/arrow keys to move · space/enter to act · :q menu · :qa quit".to_string()
+        let help_line = if self.show_help {
+            Some(if self.active.is_some() {
+                "hjkl/arrow keys to move · space/enter to act · :q menu · :qa quit · :help hide"
+                    .to_string()
+            } else {
+                "j/k to move · enter to play · :q quit · :help to show commands".to_string()
+            })
         } else {
-            "j/k to move · enter to play · :q quit".to_string()
+            None
         };
         let command_text = self.command.as_ref().map(|cmd| format!(":{}", cmd.buffer));
         let toast_text = self.toast.as_ref().map(|t| t.message.as_str());
@@ -229,8 +245,8 @@ impl App {
             frame,
             areas[1],
             HudContext {
-                primary: &status_line,
-                secondary: &help_line,
+                primary: status_line.as_deref().unwrap_or(""),
+                secondary: help_line.as_deref().unwrap_or(""),
                 command: command_text.as_deref(),
                 toast: toast_text,
             },
