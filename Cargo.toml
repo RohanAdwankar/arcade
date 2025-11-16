@@ -1,6 +1,6 @@
 [package]
 name = "arcade"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Rohan Adwankar <rohan.adwankar@gmail.com>"]
 description = "Games with vim motion controls in the terminal"
