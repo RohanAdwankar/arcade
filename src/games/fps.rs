@@ -21,6 +21,8 @@ const ENEMY_SPEED_STEP: f32 = 0.08;
 const MAX_DEPTH: f32 = 20.0;
 const TURN_STEP: f32 = TAU / 48.0;
 const FIRE_FLASH_MS: u64 = 120;
+const MAG_CAPACITY: u32 = 5;
+const RELOAD_MS: u64 = 800;
 
 static PISTOL_ART: Lazy<Vec<String>> = Lazy::new(|| {
     include_str!("../../assets/pistol.txt")
@@ -113,16 +115,6 @@ impl Vec2 {
         ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
 
-    fn direction_to(self, other: Vec2) -> Vec2 {
-        let dx = other.x - self.x;
-        let dy = other.y - self.y;
-        let mag = (dx * dx + dy * dy).sqrt().max(0.0001);
-        Vec2 {
-            x: dx / mag,
-            y: dy / mag,
-        }
-    }
-
     fn rotate(self, angle: f32) -> Vec2 {
         let cos = angle.cos();
         let sin = angle.sin();
@@ -141,9 +133,12 @@ struct Enemy {
 
 impl Enemy {
     fn update(&mut self, target: Vec2, dt: f32) {
-        let dir = self.pos.direction_to(target);
-        self.pos.x += dir.x * self.speed * dt;
-        self.pos.y += dir.y * self.speed * dt;
+        let dy = target.y - self.pos.y;
+        let dx = target.x - self.pos.x;
+        let distance = (dx * dx + dy * dy).sqrt().max(0.0001);
+        let ny = dy / distance;
+        self.pos.y += ny * self.speed * dt;
+        self.pos.x = target.x;
     }
 
     fn relative_to(&self, player: Vec2) -> Vec2 {
@@ -169,6 +164,8 @@ pub struct ShooterState {
     heading: f32,
     last_fire: Option<Instant>,
     frozen_elapsed: Option<Duration>,
+    shots_remaining: u32,
+    reloading_until: Option<Instant>,
 }
 
 impl ShooterState {
@@ -188,6 +185,8 @@ impl ShooterState {
             heading: 0.0,
             last_fire: None,
             frozen_elapsed: None,
+            shots_remaining: MAG_CAPACITY,
+            reloading_until: None,
         }
     }
 
@@ -241,7 +240,21 @@ impl ShooterState {
         if !self.alive {
             return;
         }
+        if let Some(ready_at) = self.reloading_until {
+            if Instant::now() < ready_at {
+                self.status = "Reloading...".into();
+                return;
+            }
+            self.reloading_until = None;
+        }
+        if self.shots_remaining == 0 {
+            let until = Instant::now() + Duration::from_millis(RELOAD_MS);
+            self.reloading_until = Some(until);
+            self.status = "Reloading...".into();
+            return;
+        }
         self.last_fire = Some(Instant::now());
+        self.shots_remaining -= 1;
         let mut hit_index: Option<usize> = None;
         let mut best_distance = f32::MAX;
         for (idx, enemy) in self.enemies.iter().enumerate() {
@@ -305,6 +318,8 @@ impl ShooterState {
         self.heading = 0.0;
         self.last_fire = None;
         self.frozen_elapsed = None;
+        self.shots_remaining = MAG_CAPACITY;
+        self.reloading_until = None;
     }
 
     fn render_field(&self, cols: usize) -> Vec<Line<'static>> {
@@ -359,6 +374,13 @@ impl ShooterState {
         let dt = now.saturating_duration_since(self.last_tick).as_secs_f32();
         self.last_tick = now;
         if self.alive {
+            if let Some(until) = self.reloading_until {
+                if now >= until {
+                    self.reloading_until = None;
+                    self.shots_remaining = MAG_CAPACITY;
+                    self.status = "Magazine refilled".into();
+                }
+            }
             self.maybe_spawn(now);
             for enemy in &mut self.enemies {
                 enemy.update(self.player, dt);
@@ -388,17 +410,36 @@ impl ShooterState {
         let now = Instant::now();
         let elapsed = self.elapsed(now).as_secs_f64();
         let heading = self.heading_degrees();
+        let reload_status = if let Some(until) = self.reloading_until {
+            if Instant::now() < until {
+                format!(
+                    " · Reloading {:.0}%",
+                    (100.0
+                        * (1.0
+                            - until
+                                .saturating_duration_since(Instant::now())
+                                .as_secs_f64()
+                                / (RELOAD_MS as f64 / 1000.0)))
+                        .clamp(0.0, 99.0)
+                )
+            } else {
+                "".to_string()
+            }
+        } else {
+            format!(" · {}/{}", self.shots_remaining, MAG_CAPACITY)
+        };
         let best_suffix = self
             .best_survival
             .map(|best| format!(" · Best {:.1}s", best.as_secs_f64()))
             .unwrap_or_default();
         let mut lines = vec![Line::from(format!(
-            "Time {:.1}s · Kills {} · Enemies {} · Weapon {} · Heading {:>5.1}° · {}{}",
+            "Time {:.1}s · Kills {} · Enemies {} · Weapon {} · Heading {:>5.1}°{} · {}{}",
             elapsed,
             self.kills,
             self.enemies.len(),
             WEAPON_NAME,
             heading,
+            reload_status,
             self.status,
             best_suffix
         ))];
@@ -449,9 +490,14 @@ impl ShooterState {
             upper[center] = if flash { '·' } else { '|' };
             lower[center] = if flash { '•' } else { '+' };
         }
+        let style = if flash {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default().fg(Color::White)
+        };
         vec![
-            Line::from(upper.into_iter().collect::<String>()),
-            Line::from(lower.into_iter().collect::<String>()),
+            Line::styled(upper.into_iter().collect::<String>(), style),
+            Line::styled(lower.into_iter().collect::<String>(), style),
         ]
     }
 
